@@ -2,18 +2,6 @@
 import os
 
 import torch
-from project.config import (
-    BATCH_SIZE_SCRATCH_TRANSFORMER,
-    BPE_MIN_FREQUENCY,
-    BPE_VOCAB_SIZE,
-    DIRECTIONS,
-    EPOCHS_SCRATCH_TRANSFORMER,
-    LEARNING_RATE_SCRATCH,
-    MAX_SENTENCES,
-    OUTPUT_DIR,
-    RAW_DATA_PATH,
-    TRANSFORMER_CONFIG,
-)
 
 from config import *
 from data_utils import load_and_clean_data, split_data
