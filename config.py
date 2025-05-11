@@ -3,8 +3,8 @@
 import os
 
 # Đường dẫn dữ liệu
-RAW_DATA_PATH = "/kaggle/input/daily-en-vi/eng-vie.csv"
-OUTPUT_DIR = "/kaggle/working/output"
+RAW_DATA_PATH = "data/eng-vie.csv"
+OUTPUT_DIR = "output"
 
 # Tokenizer BPE
 BPE_VOCAB_SIZE = 30000

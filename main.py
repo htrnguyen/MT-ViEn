@@ -2,17 +2,6 @@
 import os
 
 import torch
-from config import *
-from data_utils import load_and_clean_data, split_data
-from datasets import create_dataloaders
-from eval_utils import calculate_bleu, calculate_rouge, generate_translations
-from models.gpt_scratch import GPTScratchModel
-from models.pretrained_models import load_gpt2_model, load_marian_model
-from models.transformer_scratch import TransformerScratchModel
-from tokenization_utils import load_bpe_tokenizer, train_bpe_tokenizer
-from train_utils import train_model
-from utils import clear_gpu_cache, plot_training_history
-
 from project.config import (
     BATCH_SIZE_SCRATCH_TRANSFORMER,
     BPE_MIN_FREQUENCY,
@@ -25,6 +14,17 @@ from project.config import (
     RAW_DATA_PATH,
     TRANSFORMER_CONFIG,
 )
+
+from config import *
+from data_utils import load_and_clean_data, split_data
+from datasets import create_dataloaders
+from eval_utils import calculate_bleu, calculate_rouge, generate_translations
+from models.gpt_scratch import GPTScratchModel
+from models.pretrained_models import load_gpt2_model, load_marian_model
+from models.transformer_scratch import TransformerScratchModel
+from tokenization_utils import load_bpe_tokenizer, train_bpe_tokenizer
+from train_utils import train_model
+from utils import clear_gpu_cache, plot_training_history
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

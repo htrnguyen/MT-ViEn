@@ -1,8 +1,9 @@
 # datasets.py
 import torch
+from torch.utils.data import DataLoader, Dataset
+
 from config import BPE_VOCAB_SIZE, MAX_LEN_GPT, MAX_LEN_SCRATCH
 from tokenization_utils import load_bpe_tokenizer
-from torch.utils.data import DataLoader, Dataset
 
 
 class TranslationDataset(Dataset):

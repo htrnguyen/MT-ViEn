@@ -1,8 +1,9 @@
 # tokenization_utils.py
 import os
 
-from config import SPECIAL_TOKENS_BPE
 from tokenizers import ByteLevelBPETokenizer
+
+from config import SPECIAL_TOKENS_BPE
 
 
 def train_bpe_tokenizer(
