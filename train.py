@@ -227,6 +227,7 @@ def run_training(
                     "early_stopping": True,
                     "pad_token_id": pad_token_id,
                     "eos_token_id": end_token_id,
+                    "top_k": 50 if model_type == "GPT2_FineTuned" else 0,
                 }
 
                 if model_type == "MarianMT":
@@ -237,7 +238,7 @@ def run_training(
                 elif model_type == "GPT2_FineTuned":
                     preds = []
                     for src_text in src_texts:
-                        prompt = f"{src_lang.capitalize()}: {src_text} {tgt_lang.capitalize()}:"
+                        prompt = f"Translate from English to Vietnamese: {src_text} -> "
                         input_ids_g = tokenizer.encode(
                             prompt,
                             return_tensors="pt",
@@ -249,16 +250,11 @@ def run_training(
                             input_ids_g, attention_mask=attn_mask_g, **generation_params
                         )
                         pred = tokenizer.decode(gen_ids[0], skip_special_tokens=True)
-                        marker = f"{tgt_lang.capitalize()}:"
-                        pred = (
-                            pred.split(marker)[-1].strip()
-                            if marker in pred
-                            else pred.replace(prompt, "").strip()
-                        )
+                        pred = pred.replace(prompt, "").strip()
                         preds.append(pred)
                 elif model_type == "Transformer_Scratch":
                     src_key_padding_mask = batch["src_key_padding_mask"].to(device)
-                    gen_ids = model.generate(
+                    _, preds = model.generate(
                         input_ids,
                         src_key_padding_mask,
                         config["max_len"],
@@ -266,19 +262,6 @@ def run_training(
                         end_token_id,
                         pad_token_id,
                     )
-                    preds = [
-                        tokenizer.decode(
-                            ids[
-                                1 : (
-                                    ids.tolist().index(end_token_id)
-                                    if end_token_id in ids
-                                    else len(ids)
-                                )
-                            ],
-                            skip_special_tokens=True,
-                        )
-                        for ids in gen_ids
-                    ]
                 elif model_type == "GPT_Scratch":
                     preds = []
                     for src_text in src_texts:
@@ -290,16 +273,10 @@ def run_training(
                         ).unsqueeze(0)
                         if prompt_ids.size(1) > config["max_len"] // 2:
                             prompt_ids = prompt_ids[:, : config["max_len"] // 2]
-                        gen_ids = model.generate(
+                        _, pred = model.generate(
                             prompt_ids, config["max_len"], end_token_id, pad_token_id
                         )
-                        start_idx = prompt_ids.size(1)
-                        gen_tgt_ids = gen_ids[0, start_idx:].cpu().tolist()
-                        if end_token_id in gen_tgt_ids:
-                            gen_tgt_ids = gen_tgt_ids[: gen_tgt_ids.index(end_token_id)]
-                        preds.append(
-                            tokenizer.decode(gen_tgt_ids, skip_special_tokens=True)
-                        )
+                        preds.append(pred[0])  # Lấy chuỗi đã giải mã
 
                 val_preds.extend(preds)
                 val_refs.extend(tgt_texts)
@@ -359,8 +336,8 @@ def run_training(
             src_texts = batch["src_text"]
             tgt_texts = batch["tgt_text"]
 
-            generation_params["num_beams"] = 6  # Tăng beam để cải thiện chất lượng
-            generation_params["length_penalty"] = 1.2  # Khuyến khích chuỗi dài hơn
+            generation_params["num_beams"] = 8  # Tăng beam để cải thiện chất lượng
+            generation_params["length_penalty"] = 1.5  # Khuyến khích chuỗi dài hơn
 
             if model_type == "MarianMT":
                 gen_ids = model.generate(
@@ -370,9 +347,7 @@ def run_training(
             elif model_type == "GPT2_FineTuned":
                 preds = []
                 for src_text in src_texts:
-                    prompt = (
-                        f"{src_lang.capitalize()}: {src_text} {tgt_lang.capitalize()}:"
-                    )
+                    prompt = f"Translate from English to Vietnamese: {src_text} -> "
                     input_ids_g = tokenizer.encode(
                         prompt,
                         return_tensors="pt",
@@ -384,16 +359,11 @@ def run_training(
                         input_ids_g, attention_mask=attn_mask_g, **generation_params
                     )
                     pred = tokenizer.decode(gen_ids[0], skip_special_tokens=True)
-                    marker = f"{tgt_lang.capitalize()}:"
-                    pred = (
-                        pred.split(marker)[-1].strip()
-                        if marker in pred
-                        else pred.replace(prompt, "").strip()
-                    )
+                    pred = pred.replace(prompt, "").strip()
                     preds.append(pred)
             elif model_type == "Transformer_Scratch":
                 src_key_padding_mask = batch["src_key_padding_mask"].to(device)
-                gen_ids = model.generate(
+                _, preds = model.generate(
                     input_ids,
                     src_key_padding_mask,
                     config["max_len"],
@@ -401,19 +371,6 @@ def run_training(
                     end_token_id,
                     pad_token_id,
                 )
-                preds = [
-                    tokenizer.decode(
-                        ids[
-                            1 : (
-                                ids.tolist().index(end_token_id)
-                                if end_token_id in ids
-                                else len(ids)
-                            )
-                        ],
-                        skip_special_tokens=True,
-                    )
-                    for ids in gen_ids
-                ]
             elif model_type == "GPT_Scratch":
                 preds = []
                 for src_text in src_texts:
@@ -425,22 +382,15 @@ def run_training(
                     ).unsqueeze(0)
                     if prompt_ids.size(1) > config["max_len"] // 2:
                         prompt_ids = prompt_ids[:, : config["max_len"] // 2]
-                    gen_ids = model.generate(
+                    _, pred = model.generate(
                         prompt_ids, config["max_len"], end_token_id, pad_token_id
                     )
-                    start_idx = prompt_ids.size(1)
-                    gen_tgt_ids = gen_ids[0, start_idx:].cpu().tolist()
-                    if end_token_id in gen_tgt_ids:
-                        gen_tgt_ids = gen_tgt_ids[: gen_tgt_ids.index(end_token_id)]
-                    preds.append(
-                        tokenizer.decode(gen_tgt_ids, skip_special_tokens=True)
-                    )
+                    preds.append(pred[0])
 
             test_preds.extend(preds)
             test_refs.extend(tgt_texts)
             test_srcs.extend(src_texts)
 
-    # Tính toán kết quả test
     test_bleu = calculate_bleu(test_preds, test_refs)
     test_rouge = calculate_rouge(test_preds, test_refs)
 
@@ -450,7 +400,6 @@ def run_training(
         f"- ROUGE-1: {test_rouge['rouge1']:.4f}, ROUGE-2: {test_rouge['rouge2']:.4f}, ROUGE-L: {test_rouge['rougeL']:.4f}"
     )
 
-    # In mẫu kết quả
     for i in range(min(3, len(test_preds))):
         print(f"\nMẫu {i+1}:")
         print(f"- Src: {test_srcs[i]}")
@@ -464,7 +413,6 @@ def run_training(
         "ROUGE-L": f"{test_rouge['rougeL']:.4f}",
     }
 
-    # Lưu mô hình cuối
     final_model_path = os.path.join(model_save_dir, "final_model")
     if model_type in ["MarianMT", "GPT2_FineTuned"]:
         model.model.save_pretrained(final_model_path)
@@ -474,7 +422,6 @@ def run_training(
         torch.save(model.state_dict(), f"{final_model_path}_state_dict.pt")
         print(f"Lưu mô hình cuối tại: {final_model_path}_state_dict.pt")
 
-    # Giải phóng bộ nhớ
     del model, optimizer, scheduler, scaler
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -485,20 +432,19 @@ def run_training(
 if __name__ == "__main__":
     from transformers import GPT2Tokenizer, MarianTokenizer
 
-    from .data_preprocessing import (
+    from data_preprocessing import (
         ScratchGPTDataset,
         ScratchTransformerDataset,
         load_and_preprocess_data,
         train_bpe_tokenizer,
     )
-    from .models import (
+    from models import (
         GPT2FineTunedWrapper,
         MarianMTWrapper,
         ScratchGPTModel,
         TransformerScratchModel,
     )
 
-    # Cấu hình mẫu
     config = {
         "model_type": "Transformer_Scratch",
         "src_lang": "en",
@@ -518,14 +464,12 @@ if __name__ == "__main__":
         "dropout": 0.2,
     }
 
-    # Tải dữ liệu
     data_file = "/kaggle/input/daily-en-vi/eng-vie.csv"
     output_dir = "./output"
     train_df, val_df, test_df, plot_dir = load_and_preprocess_data(
         data_file, output_dir
     )
 
-    # Khởi tạo tokenizer và mô hình
     tokenizer = train_bpe_tokenizer(train_df, output_dir)
     model = TransformerScratchModel(
         src_vocab_size=tokenizer.get_vocab_size(True),
@@ -539,7 +483,6 @@ if __name__ == "__main__":
         max_seq_len=config["max_len"],
     ).to(device)
 
-    # Tạo dataset
     train_dataset = ScratchTransformerDataset(
         train_df, tokenizer, "en", "vi", config["max_len"]
     )
@@ -550,11 +493,9 @@ if __name__ == "__main__":
         test_df, tokenizer, "en", "vi", config["max_len"]
     )
 
-    # Chạy huấn luyện
     history, results, experiment_key = run_training(
         config, train_dataset, val_dataset, test_dataset, model, tokenizer, output_dir
     )
 
-    # Lưu kết quả
     all_results = {experiment_key: results}
     save_results_table(all_results, output_dir)

@@ -217,7 +217,20 @@ class TransformerScratchModel(nn.Module):
             if (next_token == end_token_id).all():
                 break
 
-        return tgt_tokens
+        # Chuyển tensor thành list để giải mã
+        preds = []
+        for ids in tgt_tokens:
+            ids_list = ids.cpu().tolist()
+            end_idx = (
+                ids_list.index(end_token_id)
+                if end_token_id in ids_list
+                else len(ids_list)
+            )
+            preds.append(
+                tokenizer.decode(ids_list[1:end_idx], skip_special_tokens=True)
+            )
+
+        return tgt_tokens, preds
 
 
 class ScratchGPTModel(nn.Module):
@@ -318,7 +331,22 @@ class ScratchGPTModel(nn.Module):
             if (next_token == end_token_id).all():
                 break
 
-        return generated
+        # Chuyển tensor thành list để giải mã
+        preds = []
+        for ids in generated:
+            ids_list = ids.cpu().tolist()
+            end_idx = (
+                ids_list.index(end_token_id)
+                if end_token_id in ids_list
+                else len(ids_list)
+            )
+            preds.append(
+                tokenizer.decode(
+                    ids_list[prompt_ids.size(1) : end_idx], skip_special_tokens=True
+                )
+            )
+
+        return generated, preds
 
 
 class GPT2FineTunedWrapper(nn.Module):
