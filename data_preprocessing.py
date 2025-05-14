@@ -20,7 +20,7 @@ from tokenizers import ByteLevelBPETokenizer
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 
-from utils import plot_training_history, setup_directories
+from .utils import plot_training_history, setup_directories
 
 # Thiết lập kiểu dáng cho biểu đồ
 sns.set(style="whitegrid")
@@ -30,12 +30,6 @@ plt.rcParams["figure.figsize"] = (12, 6)
 def clean_text(text):
     """
     Làm sạch văn bản: chuyển thành chữ thường, loại bỏ ký tự không cần thiết, chuẩn hóa khoảng trắng.
-
-    Args:
-        text: Văn bản đầu vào.
-
-    Returns:
-        str: Văn bản đã làm sạch.
     """
     if not isinstance(text, str):
         return ""
@@ -52,18 +46,9 @@ def clean_text(text):
 def load_and_preprocess_data(data_file, output_dir):
     """
     Tải và tiền xử lý dữ liệu từ file CSV, lưu các tập train/val/test.
-
-    Args:
-        data_file (str): Đường dẫn file CSV chứa cặp câu en-vi.
-        output_dir (str): Thư mục lưu dữ liệu đã xử lý.
-
-    Returns:
-        tuple: DataFrame train, val, test và thư mục lưu biểu đồ.
     """
-    # Tạo thư mục
     model_dir, plot_dir = setup_directories(output_dir)
 
-    # Tải dữ liệu
     data_df = pd.read_csv(data_file, header=0)
     if len(data_df.columns) >= 2:
         data_df = data_df.iloc[:, :2]
@@ -73,11 +58,9 @@ def load_and_preprocess_data(data_file, output_dir):
 
     print(f"Đã tải {len(data_df)} cặp câu từ: {data_file}")
 
-    # Làm sạch dữ liệu
     data_df["en"] = data_df["en"].apply(clean_text)
     data_df["vi"] = data_df["vi"].apply(clean_text)
 
-    # Loại bỏ dòng trống hoặc trùng lặp
     original_len = len(data_df)
     data_df.dropna(subset=["en", "vi"], inplace=True)
     data_df = data_df[data_df["en"].str.strip() != ""]
@@ -88,7 +71,6 @@ def load_and_preprocess_data(data_file, output_dir):
     print(f"Loại bỏ {original_len - len(data_df)} cặp câu trống/trùng lặp.")
     print(f"Số cặp câu sau làm sạch: {len(data_df)}")
 
-    # Chia tập dữ liệu
     train_df, temp_df = train_test_split(data_df, test_size=0.2, random_state=42)
     val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42)
 
@@ -97,7 +79,6 @@ def load_and_preprocess_data(data_file, output_dir):
     print(f"- Val: {len(val_df)}")
     print(f"- Test: {len(test_df)}")
 
-    # Lưu dữ liệu đã xử lý
     train_csv = os.path.join(output_dir, "train_processed.csv")
     val_csv = os.path.join(output_dir, "val_processed.csv")
     test_csv = os.path.join(output_dir, "test_processed.csv")
@@ -106,14 +87,12 @@ def load_and_preprocess_data(data_file, output_dir):
     test_df.to_csv(test_csv, index=False, encoding="utf-8")
     print(f"Lưu dữ liệu đã xử lý tại: {output_dir}")
 
-    # Phân tích độ dài câu
     train_df["en_length"] = train_df["en"].apply(lambda x: len(str(x).split()))
     train_df["vi_length"] = train_df["vi"].apply(lambda x: len(str(x).split()))
 
     print("\nThống kê độ dài câu (số từ) trên tập Train:")
     print(train_df[["en_length", "vi_length"]].describe())
 
-    # Vẽ biểu đồ phân phối độ dài câu
     plt.figure(figsize=(15, 6))
     plt.subplot(1, 2, 1)
     sns.histplot(train_df["en_length"], bins=50, kde=True, color="dodgerblue")
@@ -141,20 +120,10 @@ def load_and_preprocess_data(data_file, output_dir):
 def train_bpe_tokenizer(train_df, output_dir, vocab_size=30000, min_freq=2):
     """
     Huấn luyện BPE tokenizer với subword regularization.
-
-    Args:
-        train_df (pd.DataFrame): DataFrame chứa dữ liệu train.
-        output_dir (str): Thư mục lưu tokenizer.
-        vocab_size (int): Kích thước từ vựng.
-        min_freq (int): Tần suất tối thiểu của token.
-
-    Returns:
-        ByteLevelBPETokenizer: Tokenizer đã huấn luyện.
     """
     tokenizer_dir = os.path.join(output_dir, "bpe_tokenizer")
     os.makedirs(tokenizer_dir, exist_ok=True)
 
-    # Chuẩn bị dữ liệu cho BPE
     all_texts = (
         pd.concat([train_df["en"].astype(str), train_df["vi"].astype(str)])
         .unique()
@@ -167,7 +136,6 @@ def train_bpe_tokenizer(train_df, output_dir, vocab_size=30000, min_freq=2):
 
     print(f"Chuẩn bị {len(all_texts)} câu cho huấn luyện BPE.")
 
-    # Huấn luyện tokenizer
     special_tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
     tokenizer = ByteLevelBPETokenizer()
     tokenizer.train(
@@ -181,14 +149,12 @@ def train_bpe_tokenizer(train_df, output_dir, vocab_size=30000, min_freq=2):
     tokenizer.save_model(tokenizer_dir)
     print(f"Lưu tokenizer BPE tại: {tokenizer_dir}")
 
-    # Tải lại tokenizer
     tokenizer = ByteLevelBPETokenizer.from_file(
         os.path.join(tokenizer_dir, "vocab.json"),
         os.path.join(tokenizer_dir, "merges.txt"),
     )
     tokenizer.add_special_tokens(special_tokens)
 
-    # Gán ID cho các token đặc biệt
     tokenizer.pad_token_id = tokenizer.token_to_id("[PAD]")
     tokenizer.unk_token_id = tokenizer.token_to_id("[UNK]")
     tokenizer.cls_token_id = tokenizer.token_to_id("[CLS]")
@@ -197,7 +163,6 @@ def train_bpe_tokenizer(train_df, output_dir, vocab_size=30000, min_freq=2):
 
     print(f"Kích thước từ vựng BPE: {tokenizer.get_vocab_size(True)}")
 
-    # Phân tích tokenization
     token_lengths = []
     total_unk = 0
     for sent in tqdm(all_texts, desc="Phân tích token BPE"):
@@ -209,7 +174,6 @@ def train_bpe_tokenizer(train_df, output_dir, vocab_size=30000, min_freq=2):
     print(pd.Series(token_lengths).describe())
     print(f"Tổng số token [UNK]: {total_unk}")
 
-    # Vẽ biểu đồ phân phối độ dài token
     plt.figure(figsize=(10, 6))
     sns.histplot(token_lengths, bins=50, kde=True, color="darkmagenta")
     plt.title("Phân phối độ dài token BPE (Train)")
@@ -222,7 +186,6 @@ def train_bpe_tokenizer(train_df, output_dir, vocab_size=30000, min_freq=2):
     plt.show()
     print(f"Lưu biểu đồ phân phối độ dài token tại: {plot_path}")
 
-    # Xóa file tạm
     os.remove(temp_file)
     print(f"Xóa file tạm: {temp_file}")
 
@@ -259,7 +222,6 @@ class ScratchTransformerDataset(Dataset):
         tgt_ids_input = [self.cls_id] + tgt_enc.ids[: self.max_length - 2]
         tgt_ids_labels = tgt_enc.ids[: self.max_length - 2] + [self.sep_id]
 
-        # Đệm chuỗi
         src_ids = src_ids + [self.pad_id] * (self.max_length - len(src_ids))
         tgt_ids_input = tgt_ids_input + [self.pad_id] * (
             self.max_length - len(tgt_ids_input)
@@ -315,6 +277,115 @@ class ScratchGPTDataset(Dataset):
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "attention_mask": torch.tensor(input_ids) != self.pad_id,
             "labels": torch.tensor(input_ids, dtype=torch.long),
+            "src_text": src_text,
+            "tgt_text": tgt_text,
+        }
+
+
+class MarianTranslationDataset(Dataset):
+    """
+    Dataset cho mô hình MarianMT, sử dụng tokenizer Hugging Face.
+    """
+
+    def __init__(
+        self,
+        df,
+        tokenizer,
+        src_lang_col,
+        tgt_lang_col,
+        max_source_length,
+        max_target_length,
+    ):
+        self.df = df
+        self.tokenizer = tokenizer
+        self.src_lang_col = src_lang_col
+        self.tgt_lang_col = tgt_lang_col
+        self.max_source_length = max_source_length
+        self.max_target_length = max_target_length
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        src_text = str(row[self.src_lang_col])
+        tgt_text = str(row[self.tgt_lang_col])
+
+        inputs = self.tokenizer(
+            src_text,
+            max_length=self.max_source_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        with self.tokenizer.as_target_tokenizer():
+            labels = self.tokenizer(
+                tgt_text,
+                max_length=self.max_target_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            )
+
+        labels_ids = labels.input_ids.squeeze()
+        labels_ids[labels_ids == self.tokenizer.pad_token_id] = -100
+
+        return {
+            "input_ids": inputs.input_ids.squeeze(),
+            "attention_mask": inputs.attention_mask.squeeze(),
+            "labels": labels_ids,
+            "src_text": src_text,
+            "tgt_text": tgt_text,
+        }
+
+
+class GPTTranslationPromptDataset(Dataset):
+    """
+    Dataset cho mô hình GPT2_FineTuned, sử dụng prompt với tokenizer Hugging Face.
+    """
+
+    def __init__(
+        self,
+        df,
+        tokenizer,
+        src_lang_col,
+        tgt_lang_col,
+        src_prompt_key,
+        tgt_prompt_key,
+        max_length,
+    ):
+        self.df = df
+        self.tokenizer = tokenizer
+        self.src_lang_col = src_lang_col
+        self.tgt_lang_col = tgt_lang_col
+        self.src_prompt_key = src_prompt_key
+        self.tgt_prompt_key = tgt_prompt_key
+        self.max_length = max_length
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        src_text = str(row[self.src_lang_col])
+        tgt_text = str(row[self.tgt_lang_col])
+
+        prompt = f"{self.src_prompt_key}: {src_text} {self.tgt_prompt_key}: {tgt_text}{self.tokenizer.eos_token}"
+        inputs = self.tokenizer(
+            prompt,
+            max_length=self.max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        return {
+            "input_ids": inputs.input_ids.squeeze(),
+            "attention_mask": inputs.attention_mask.squeeze(),
+            "labels": inputs.input_ids.squeeze(),
             "src_text": src_text,
             "tgt_text": tgt_text,
         }
