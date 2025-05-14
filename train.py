@@ -122,6 +122,13 @@ def run_training(
             leave=False,
         )
 
+        # Giảm dần teacher forcing ratio
+        teacher_forcing_ratio = (
+            max(0.5 - (epoch / config["epochs"]) * 0.4, 0.1)
+            if model_type == "GPT_Scratch"
+            else 0.5
+        )
+
         for batch in train_pbar:
             optimizer.zero_grad(set_to_none=True)
             input_ids = batch["input_ids"].to(device)
@@ -148,6 +155,7 @@ def run_training(
                     outputs = model(
                         input_ids,
                         tgt_key_padding_mask=batch["attention_mask"].to(device),
+                        teacher_forcing_ratio=teacher_forcing_ratio,
                     )
                     loss = criterion(
                         outputs.view(-1, outputs.size(-1)), labels.view(-1)
@@ -220,10 +228,18 @@ def run_training(
 
                 # Sinh dự đoán với beam search nâng cao
                 generation_params = {
-                    "max_length": config["max_len"] + 10,
-                    "num_beams": 5,
-                    "length_penalty": 1.0,
-                    "no_repeat_ngram_size": 2,
+                    "max_length": (
+                        80 if model_type == "GPT2_FineTuned" else config["max_len"] + 10
+                    ),
+                    "num_beams": (
+                        5 if model_type in ["MarianMT", "GPT2_FineTuned"] else 5
+                    ),
+                    "length_penalty": (
+                        1.0 if model_type in ["MarianMT", "GPT2_FineTuned"] else 1.0
+                    ),
+                    "no_repeat_ngram_size": (
+                        3 if model_type in ["MarianMT", "GPT2_FineTuned"] else 2
+                    ),
                     "early_stopping": True,
                     "pad_token_id": pad_token_id,
                     "eos_token_id": end_token_id,
@@ -276,7 +292,7 @@ def run_training(
                         _, pred = model.generate(
                             prompt_ids, config["max_len"], end_token_id, pad_token_id
                         )
-                        preds.append(pred[0])  # Lấy chuỗi đã giải mã
+                        preds.append(pred[0])
 
                 val_preds.extend(preds)
                 val_refs.extend(tgt_texts)
@@ -336,8 +352,12 @@ def run_training(
             src_texts = batch["src_text"]
             tgt_texts = batch["tgt_text"]
 
-            generation_params["num_beams"] = 8  # Tăng beam để cải thiện chất lượng
-            generation_params["length_penalty"] = 1.5  # Khuyến khích chuỗi dài hơn
+            generation_params["num_beams"] = (
+                10 if model_type in ["MarianMT", "GPT2_FineTuned"] else 5
+            )
+            generation_params["length_penalty"] = (
+                1.8 if model_type in ["MarianMT", "GPT2_FineTuned"] else 1.0
+            )
 
             if model_type == "MarianMT":
                 gen_ids = model.generate(

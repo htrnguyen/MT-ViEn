@@ -69,8 +69,7 @@ class MarianMTWrapper(nn.Module):
 
 class TransformerScratchModel(nn.Module):
     """
-    Mô hình Transformer từ đầu với layer normalization, residual connections,
-    và scaled dot-product attention.
+    Mô hình Transformer từ đầu theo kiến trúc trong mt-vien_v1.py, với beam search.
     """
 
     def __init__(
@@ -79,8 +78,8 @@ class TransformerScratchModel(nn.Module):
         tgt_vocab_size,
         d_model=256,
         nhead=4,
-        num_encoder_layers=3,
-        num_decoder_layers=3,
+        num_encoder_layers=8,
+        num_decoder_layers=8,
         dim_feedforward=512,
         dropout=0.2,
         max_seq_len=50,
@@ -92,12 +91,8 @@ class TransformerScratchModel(nn.Module):
         self.src_embedding = nn.Embedding(src_vocab_size, d_model)
         self.tgt_embedding = nn.Embedding(tgt_vocab_size, d_model)
         self.positional_encoding = PositionalEncoding(
-            d_model, dropout, max_len=max_seq_len
+            d_model, dropout, max_len=max_seq_len + 10
         )
-
-        # Layer normalization
-        self.src_norm = nn.LayerNorm(d_model)
-        self.tgt_norm = nn.LayerNorm(d_model)
 
         # Transformer layers
         encoder_layer = nn.TransformerEncoderLayer(
@@ -106,7 +101,6 @@ class TransformerScratchModel(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
-            norm_first=True,
         )
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer, num_encoder_layers
@@ -118,7 +112,6 @@ class TransformerScratchModel(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
-            norm_first=True,
         )
         self.transformer_decoder = nn.TransformerDecoder(
             decoder_layer, num_decoder_layers
@@ -137,10 +130,16 @@ class TransformerScratchModel(nn.Module):
         )
 
     def _init_weights(self):
-        """Khởi tạo trọng số cho embedding và linear layers."""
-        nn.init.xavier_uniform_(self.src_embedding.weight)
-        nn.init.xavier_uniform_(self.tgt_embedding.weight)
-        nn.init.xavier_uniform_(self.fc_out.weight)
+        """Khởi tạo trọng số với Xavier uniform và gain điều chỉnh."""
+        nn.init.xavier_uniform_(
+            self.src_embedding.weight, gain=nn.init.calculate_gain("relu")
+        )
+        nn.init.xavier_uniform_(
+            self.tgt_embedding.weight, gain=nn.init.calculate_gain("relu")
+        )
+        nn.init.xavier_uniform_(
+            self.fc_out.weight, gain=nn.init.calculate_gain("linear")
+        )
         nn.init.zeros_(self.fc_out.bias)
 
     def _generate_square_subsequent_mask(self, sz):
@@ -153,11 +152,9 @@ class TransformerScratchModel(nn.Module):
     ):
         src_emb = self.src_embedding(src) * math.sqrt(self.d_model)
         src_emb = self.positional_encoding(src_emb)
-        src_emb = self.src_norm(src_emb)
 
         tgt_emb = self.tgt_embedding(tgt_decoder_input) * math.sqrt(self.d_model)
         tgt_emb = self.positional_encoding(tgt_emb)
-        tgt_emb = self.tgt_norm(tgt_emb)
 
         tgt_mask = self._generate_square_subsequent_mask(tgt_decoder_input.size(1))
 
@@ -181,45 +178,69 @@ class TransformerScratchModel(nn.Module):
         start_token_id,
         end_token_id,
         pad_token_id,
+        num_beams=5,
     ):
         self.eval()
         batch_size = src.size(0)
         src_emb = self.src_embedding(src) * math.sqrt(self.d_model)
         src_emb = self.positional_encoding(src_emb)
-        src_emb = self.src_norm(src_emb)
-
         memory = self.transformer_encoder(
             src_emb, src_key_padding_mask=src_key_padding_mask
         )
 
-        tgt_tokens = torch.ones(batch_size, 1, dtype=torch.long, device=device).fill_(
-            start_token_id
-        )
+        # Beam search
+        beams = [
+            (
+                torch.ones(batch_size, 1, dtype=torch.long, device=device).fill_(
+                    start_token_id
+                ),
+                0.0,
+            )
+        ]
+        completed = []
 
         for _ in range(max_len - 1):
-            tgt_emb = self.tgt_embedding(tgt_tokens) * math.sqrt(self.d_model)
-            tgt_emb = self.positional_encoding(tgt_emb)
-            tgt_emb = self.tgt_norm(tgt_emb)
+            new_beams = []
+            for beam, score in beams:
+                tgt_emb = self.tgt_embedding(beam) * math.sqrt(self.d_model)
+                tgt_emb = self.positional_encoding(tgt_emb)
+                tgt_mask = self._generate_square_subsequent_mask(beam.size(1))
 
-            tgt_mask = self._generate_square_subsequent_mask(tgt_tokens.size(1))
+                output = self.transformer_decoder(
+                    tgt_emb,
+                    memory,
+                    tgt_mask=tgt_mask,
+                    memory_key_padding_mask=src_key_padding_mask,
+                )
 
-            output = self.transformer_decoder(
-                tgt_emb,
-                memory,
-                tgt_mask=tgt_mask,
-                memory_key_padding_mask=src_key_padding_mask,
-            )
+                pred_logits = self.fc_out(output[:, -1, :])
+                probs = torch.softmax(pred_logits, dim=-1)
+                top_probs, top_idx = probs.topk(num_beams, dim=-1)
 
-            pred_logits = self.fc_out(output[:, -1, :])
-            next_token = pred_logits.argmax(1).unsqueeze(1)
-            tgt_tokens = torch.cat((tgt_tokens, next_token), dim=1)
+                for i in range(num_beams):
+                    next_token = top_idx[:, i].unsqueeze(1)
+                    next_score = score - torch.log(top_probs[:, i]).item()
+                    new_beam = torch.cat((beam, next_token), dim=1)
+                    new_beams.append((new_beam, next_score))
 
-            if (next_token == end_token_id).all():
+            new_beams = sorted(new_beams, key=lambda x: x[1])[:num_beams]
+            beams = []
+            for beam, score in new_beams:
+                if beam[:, -1].item() == end_token_id:
+                    completed.append((beam, score))
+                else:
+                    beams.append((beam, score))
+
+            if len(completed) >= num_beams or not beams:
                 break
 
-        # Chuyển tensor thành list để giải mã
+        if not completed:
+            completed = beams
+
+        best_beam, _ = min(completed, key=lambda x: x[1])
+
         preds = []
-        for ids in tgt_tokens:
+        for ids in best_beam:
             ids_list = ids.cpu().tolist()
             end_idx = (
                 ids_list.index(end_token_id)
@@ -230,13 +251,12 @@ class TransformerScratchModel(nn.Module):
                 tokenizer.decode(ids_list[1:end_idx], skip_special_tokens=True)
             )
 
-        return tgt_tokens, preds
+        return best_beam, preds
 
 
 class ScratchGPTModel(nn.Module):
     """
-    Mô hình GPT từ đầu với layer normalization, residual connections,
-    và causal self-attention.
+    Mô hình GPT từ đầu với beam search và scheduled sampling.
     """
 
     def __init__(
@@ -244,7 +264,7 @@ class ScratchGPTModel(nn.Module):
         vocab_size,
         d_model=256,
         nhead=4,
-        num_decoder_layers=4,
+        num_decoder_layers=8,
         dim_feedforward=512,
         dropout=0.2,
         max_seq_len=50,
@@ -255,7 +275,7 @@ class ScratchGPTModel(nn.Module):
         # Embedding layers
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.positional_encoding = PositionalEncoding(
-            d_model, dropout, max_len=max_seq_len
+            d_model, dropout, max_len=max_seq_len + 10
         )
 
         # Layer normalization
@@ -268,7 +288,6 @@ class ScratchGPTModel(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
-            norm_first=True,
         )
         self.transformer_decoder = nn.TransformerEncoder(
             decoder_layer, num_decoder_layers
@@ -285,9 +304,13 @@ class ScratchGPTModel(nn.Module):
         print(f"- d_model={d_model}, nhead={nhead}, layers={num_decoder_layers}")
 
     def _init_weights(self):
-        """Khởi tạo trọng số cho embedding và linear layers."""
-        nn.init.xavier_uniform_(self.token_embedding.weight)
-        nn.init.xavier_uniform_(self.fc_out.weight)
+        """Khởi tạo trọng số với Xavier uniform và gain điều chỉnh."""
+        nn.init.xavier_uniform_(
+            self.token_embedding.weight, gain=nn.init.calculate_gain("relu")
+        )
+        nn.init.xavier_uniform_(
+            self.fc_out.weight, gain=nn.init.calculate_gain("linear")
+        )
         nn.init.zeros_(self.fc_out.bias)
 
     def _generate_square_subsequent_mask(self, sz):
@@ -295,8 +318,16 @@ class ScratchGPTModel(nn.Module):
         mask = torch.triu(torch.ones(sz, sz, device=device), diagonal=1)
         return mask.masked_fill(mask == 1, float("-inf"))
 
-    def forward(self, tgt_input, tgt_key_padding_mask=None):
-        tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
+    def forward(self, tgt_input, tgt_key_padding_mask=None, teacher_forcing_ratio=0.5):
+        if torch.rand(1).item() < teacher_forcing_ratio and self.training:
+            tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
+        else:
+            with torch.no_grad():
+                output = self.forward(tgt_input[:, :-1], tgt_key_padding_mask)
+                next_tokens = output.argmax(-1)[:, -1:]
+                tgt_input = torch.cat((tgt_input[:, :-1], next_tokens), dim=1)
+            tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
+
         tgt_emb = self.positional_encoding(tgt_emb)
         tgt_emb = self.input_norm(tgt_emb)
 
@@ -307,33 +338,55 @@ class ScratchGPTModel(nn.Module):
         )
         return self.fc_out(output)
 
-    def generate(self, prompt_ids, max_len, end_token_id, pad_token_id):
+    def generate(self, prompt_ids, max_len, end_token_id, pad_token_id, num_beams=5):
         self.eval()
-        generated = prompt_ids.clone()
+        batch_size = prompt_ids.size(0)
+        beams = [(prompt_ids.clone(), 0.0)]
+        completed = []
 
         for _ in range(max_len - prompt_ids.size(1)):
-            padding_mask = generated == pad_token_id
+            new_beams = []
+            for beam, score in beams:
+                padding_mask = beam == pad_token_id
 
-            tgt_emb = self.token_embedding(generated) * math.sqrt(self.d_model)
-            tgt_emb = self.positional_encoding(tgt_emb)
-            tgt_emb = self.input_norm(tgt_emb)
+                tgt_emb = self.token_embedding(beam) * math.sqrt(self.d_model)
+                tgt_emb = self.positional_encoding(tgt_emb)
+                tgt_emb = self.input_norm(tgt_emb)
 
-            causal_mask = self._generate_square_subsequent_mask(generated.size(1))
+                causal_mask = self._generate_square_subsequent_mask(beam.size(1))
 
-            output = self.transformer_decoder(
-                tgt_emb, mask=causal_mask, src_key_padding_mask=padding_mask
-            )
+                output = self.transformer_decoder(
+                    tgt_emb, mask=causal_mask, src_key_padding_mask=padding_mask
+                )
 
-            next_logits = self.fc_out(output[:, -1, :])
-            next_token = next_logits.argmax(1).unsqueeze(1)
-            generated = torch.cat((generated, next_token), dim=1)
+                next_logits = self.fc_out(output[:, -1, :])
+                probs = torch.softmax(next_logits, dim=-1)
+                top_probs, top_idx = probs.topk(num_beams, dim=-1)
 
-            if (next_token == end_token_id).all():
+                for i in range(num_beams):
+                    next_token = top_idx[:, i].unsqueeze(1)
+                    next_score = score - torch.log(top_probs[:, i]).item()
+                    new_beam = torch.cat((beam, next_token), dim=1)
+                    new_beams.append((new_beam, next_score))
+
+            new_beams = sorted(new_beams, key=lambda x: x[1])[:num_beams]
+            beams = []
+            for beam, score in new_beams:
+                if beam[:, -1].item() == end_token_id:
+                    completed.append((beam, score))
+                else:
+                    beams.append((beam, score))
+
+            if len(completed) >= num_beams or not beams:
                 break
 
-        # Chuyển tensor thành list để giải mã
+        if not completed:
+            completed = beams
+
+        best_beam, _ = min(completed, key=lambda x: x[1])
+
         preds = []
-        for ids in generated:
+        for ids in best_beam:
             ids_list = ids.cpu().tolist()
             end_idx = (
                 ids_list.index(end_token_id)
@@ -346,7 +399,7 @@ class ScratchGPTModel(nn.Module):
                 )
             )
 
-        return generated, preds
+        return best_beam, preds
 
 
 class GPT2FineTunedWrapper(nn.Module):
@@ -376,27 +429,16 @@ class GPT2FineTunedWrapper(nn.Module):
 
 
 if __name__ == "__main__":
-    # Kiểm tra thiết bị
     print_device_info()
 
-    # Kiểm tra khởi tạo mô hình
     vocab_size = 30000
-
-    # MarianMT
     marian = MarianMTWrapper("Helsinki-NLP/opus-mt-en-vi").to(device)
-
-    # TransformerScratch
     transformer = TransformerScratchModel(
         src_vocab_size=vocab_size, tgt_vocab_size=vocab_size
     ).to(device)
-
-    # GPTScratch
     gpt_scratch = ScratchGPTModel(vocab_size=vocab_size).to(device)
-
-    # GPT2FineTuned
     gpt2 = GPT2FineTunedWrapper("gpt2").to(device)
 
-    # Kiểm tra forward pass với dữ liệu giả
     batch_size, seq_len = 2, 10
     src = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     tgt = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
