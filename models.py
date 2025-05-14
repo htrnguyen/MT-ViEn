@@ -69,7 +69,7 @@ class MarianMTWrapper(nn.Module):
 
 class TransformerScratchModel(nn.Module):
     """
-    Mô hình Transformer từ đầu, tái hiện từ mt-vien_v1.py, với beam search và sửa lỗi batch processing.
+    Mô hình Transformer từ đầu, tái hiện từ mt-vien_v1.py, với beam search và sửa lỗi tokenizer.
     """
 
     def __init__(
@@ -178,7 +178,8 @@ class TransformerScratchModel(nn.Module):
         start_token_id,
         end_token_id,
         pad_token_id,
-        num_beams=5,
+        tokenizer,
+        num_beams=8,
     ):
         self.eval()
         batch_size = src.size(0)
@@ -254,7 +255,7 @@ class TransformerScratchModel(nn.Module):
 
 class ScratchGPTModel(nn.Module):
     """
-    Mô hình GPT từ đầu với beam search và scheduled sampling, sửa lỗi mask shape.
+    Mô hình GPT từ đầu với beam search và scheduled sampling, sửa lỗi đệ quy và mask shape.
     """
 
     def __init__(
@@ -316,25 +317,45 @@ class ScratchGPTModel(nn.Module):
         mask = torch.triu(torch.ones(sz, sz, device=device), diagonal=1)
         return mask.masked_fill(mask == 1, float("-inf"))
 
-    def forward(self, tgt_input, tgt_key_padding_mask=None, teacher_forcing_ratio=0.5):
-        # Đồng bộ mask với input khi teacher forcing
+    def forward(self, tgt_input, tgt_key_padding_mask=None, teacher_forcing_ratio=0.7):
+        # Đồng bộ mask với input
+        seq_len = tgt_input.size(1)
+        causal_mask = self._generate_square_subsequent_mask(seq_len)
+
         if torch.rand(1).item() < teacher_forcing_ratio and self.training:
             tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
-            seq_len = tgt_input.size(1)
-            causal_mask = self._generate_square_subsequent_mask(seq_len)
             if (
                 tgt_key_padding_mask is not None
                 and seq_len < tgt_key_padding_mask.size(1)
             ):
                 tgt_key_padding_mask = tgt_key_padding_mask[:, :seq_len]
         else:
+            # Dự đoán token trước đó mà không đệ quy
             with torch.no_grad():
-                output = self.forward(tgt_input[:, :-1], tgt_key_padding_mask)
-                next_tokens = output.argmax(-1)[:, -1:]
+                partial_input = tgt_input[:, :-1]
+                partial_seq_len = partial_input.size(1)
+                partial_causal_mask = self._generate_square_subsequent_mask(
+                    partial_seq_len
+                )
+                partial_mask = (
+                    tgt_key_padding_mask[:, :partial_seq_len]
+                    if tgt_key_padding_mask is not None
+                    else None
+                )
+                partial_emb = self.token_embedding(partial_input) * math.sqrt(
+                    self.d_model
+                )
+                partial_emb = self.positional_encoding(partial_emb)
+                partial_emb = self.input_norm(partial_emb)
+                partial_output = self.transformer_decoder(
+                    partial_emb,
+                    mask=partial_causal_mask,
+                    src_key_padding_mask=partial_mask,
+                )
+                partial_output = self.fc_out(partial_output)
+                next_tokens = partial_output.argmax(-1)[:, -1:]
                 tgt_input = torch.cat((tgt_input[:, :-1], next_tokens), dim=1)
             tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
-            seq_len = tgt_input.size(1)
-            causal_mask = self._generate_square_subsequent_mask(seq_len)
             if (
                 tgt_key_padding_mask is not None
                 and seq_len < tgt_key_padding_mask.size(1)
@@ -349,7 +370,9 @@ class ScratchGPTModel(nn.Module):
         )
         return self.fc_out(output)
 
-    def generate(self, prompt_ids, max_len, end_token_id, pad_token_id, num_beams=8):
+    def generate(
+        self, prompt_ids, max_len, end_token_id, pad_token_id, tokenizer, num_beams=10
+    ):
         self.eval()
         batch_size = prompt_ids.size(0)
         beams = [(prompt_ids.clone(), 0.0)]
@@ -376,9 +399,7 @@ class ScratchGPTModel(nn.Module):
 
                 for i in range(num_beams):
                     next_token = top_idx[:, i].unsqueeze(1)
-                    next_score = (
-                        score - torch.log(top_probs[:, i]).mean().item()
-                    )  # Trung bình log-prob cho batch
+                    next_score = score - torch.log(top_probs[:, i]).mean().item()
                     new_beam = torch.cat((beam, next_token), dim=1)
                     new_beams.append((new_beam, next_score))
 

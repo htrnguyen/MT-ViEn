@@ -124,7 +124,7 @@ def run_training(
 
         # Giảm dần teacher forcing ratio
         teacher_forcing_ratio = (
-            max(0.5 - (epoch / config["epochs"]) * 0.4, 0.1)
+            max(0.7 - (epoch / config["epochs"]) * 0.6, 0.1)
             if model_type == "GPT_Scratch"
             else 0.5
         )
@@ -232,10 +232,10 @@ def run_training(
                         80 if model_type == "GPT2_FineTuned" else config["max_len"] + 10
                     ),
                     "num_beams": (
-                        5 if model_type in ["MarianMT", "GPT2_FineTuned"] else 5
+                        10 if model_type in ["MarianMT", "GPT2_FineTuned"] else 8
                     ),
                     "length_penalty": (
-                        1.0 if model_type in ["MarianMT", "GPT2_FineTuned"] else 1.0
+                        1.8 if model_type in ["MarianMT", "GPT2_FineTuned"] else 1.0
                     ),
                     "no_repeat_ngram_size": (
                         3 if model_type in ["MarianMT", "GPT2_FineTuned"] else 2
@@ -277,6 +277,7 @@ def run_training(
                         start_token_id,
                         end_token_id,
                         pad_token_id,
+                        tokenizer=tokenizer,
                     )
                 elif model_type == "GPT_Scratch":
                     preds = []
@@ -290,7 +291,11 @@ def run_training(
                         if prompt_ids.size(1) > config["max_len"] // 2:
                             prompt_ids = prompt_ids[:, : config["max_len"] // 2]
                         _, pred = model.generate(
-                            prompt_ids, config["max_len"], end_token_id, pad_token_id
+                            prompt_ids,
+                            config["max_len"],
+                            end_token_id,
+                            pad_token_id,
+                            tokenizer=tokenizer,
                         )
                         preds.append(pred[0])
 
@@ -353,7 +358,7 @@ def run_training(
             tgt_texts = batch["tgt_text"]
 
             generation_params["num_beams"] = (
-                10 if model_type in ["MarianMT", "GPT2_FineTuned"] else 5
+                10 if model_type in ["MarianMT", "GPT2_FineTuned"] else 8
             )
             generation_params["length_penalty"] = (
                 1.8 if model_type in ["MarianMT", "GPT2_FineTuned"] else 1.0
@@ -390,6 +395,7 @@ def run_training(
                     start_token_id,
                     end_token_id,
                     pad_token_id,
+                    tokenizer=tokenizer,
                 )
             elif model_type == "GPT_Scratch":
                 preds = []
@@ -403,7 +409,11 @@ def run_training(
                     if prompt_ids.size(1) > config["max_len"] // 2:
                         prompt_ids = prompt_ids[:, : config["max_len"] // 2]
                     _, pred = model.generate(
-                        prompt_ids, config["max_len"], end_token_id, pad_token_id
+                        prompt_ids,
+                        config["max_len"],
+                        end_token_id,
+                        pad_token_id,
+                        tokenizer=tokenizer,
                     )
                     preds.append(pred[0])
 
