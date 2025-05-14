@@ -69,7 +69,7 @@ class MarianMTWrapper(nn.Module):
 
 class TransformerScratchModel(nn.Module):
     """
-    Mô hình Transformer từ đầu theo kiến trúc trong mt-vien_v1.py, với beam search.
+    Mô hình Transformer từ đầu, tái hiện từ mt-vien_v1.py, với beam search và sửa lỗi batch processing.
     """
 
     def __init__(
@@ -188,75 +188,73 @@ class TransformerScratchModel(nn.Module):
             src_emb, src_key_padding_mask=src_key_padding_mask
         )
 
-        # Beam search
-        beams = [
-            (
-                torch.ones(batch_size, 1, dtype=torch.long, device=device).fill_(
-                    start_token_id
-                ),
-                0.0,
-            )
-        ]
-        completed = []
+        # Beam search cho từng mẫu trong batch
+        final_beams = []
+        final_preds = []
 
-        for _ in range(max_len - 1):
-            new_beams = []
-            for beam, score in beams:
-                tgt_emb = self.tgt_embedding(beam) * math.sqrt(self.d_model)
-                tgt_emb = self.positional_encoding(tgt_emb)
-                tgt_mask = self._generate_square_subsequent_mask(beam.size(1))
+        for b in range(batch_size):
+            beams = [
+                (torch.tensor([[start_token_id]], dtype=torch.long, device=device), 0.0)
+            ]
+            completed = []
 
-                output = self.transformer_decoder(
-                    tgt_emb,
-                    memory,
-                    tgt_mask=tgt_mask,
-                    memory_key_padding_mask=src_key_padding_mask,
-                )
+            for _ in range(max_len - 1):
+                new_beams = []
+                for beam, score in beams:
+                    tgt_emb = self.tgt_embedding(beam) * math.sqrt(self.d_model)
+                    tgt_emb = self.positional_encoding(tgt_emb)
+                    tgt_mask = self._generate_square_subsequent_mask(beam.size(1))
 
-                pred_logits = self.fc_out(output[:, -1, :])
-                probs = torch.softmax(pred_logits, dim=-1)
-                top_probs, top_idx = probs.topk(num_beams, dim=-1)
+                    output = self.transformer_decoder(
+                        tgt_emb,
+                        memory[b : b + 1],
+                        tgt_mask=tgt_mask,
+                        memory_key_padding_mask=src_key_padding_mask[b : b + 1],
+                    )
 
-                for i in range(num_beams):
-                    next_token = top_idx[:, i].unsqueeze(1)
-                    next_score = score - torch.log(top_probs[:, i]).item()
-                    new_beam = torch.cat((beam, next_token), dim=1)
-                    new_beams.append((new_beam, next_score))
+                    pred_logits = self.fc_out(output[:, -1, :])
+                    probs = torch.softmax(pred_logits, dim=-1)
+                    top_probs, top_idx = probs.topk(num_beams, dim=-1)
 
-            new_beams = sorted(new_beams, key=lambda x: x[1])[:num_beams]
-            beams = []
-            for beam, score in new_beams:
-                if beam[:, -1].item() == end_token_id:
-                    completed.append((beam, score))
-                else:
-                    beams.append((beam, score))
+                    for i in range(num_beams):
+                        next_token = top_idx[0, i].unsqueeze(0).unsqueeze(0)
+                        next_score = score - torch.log(top_probs[0, i]).item()
+                        new_beam = torch.cat((beam, next_token), dim=1)
+                        new_beams.append((new_beam, next_score))
 
-            if len(completed) >= num_beams or not beams:
-                break
+                new_beams = sorted(new_beams, key=lambda x: x[1])[:num_beams]
+                beams = []
+                for beam, score in new_beams:
+                    if beam[0, -1].item() == end_token_id:
+                        completed.append((beam, score))
+                    else:
+                        beams.append((beam, score))
 
-        if not completed:
-            completed = beams
+                if len(completed) >= num_beams or not beams:
+                    break
 
-        best_beam, _ = min(completed, key=lambda x: x[1])
+            if not completed:
+                completed = beams
 
-        preds = []
-        for ids in best_beam:
-            ids_list = ids.cpu().tolist()
+            best_beam, _ = min(completed, key=lambda x: x[1])
+            ids_list = best_beam[0].cpu().tolist()
             end_idx = (
                 ids_list.index(end_token_id)
                 if end_token_id in ids_list
                 else len(ids_list)
             )
-            preds.append(
+            final_beams.append(best_beam)
+            final_preds.append(
                 tokenizer.decode(ids_list[1:end_idx], skip_special_tokens=True)
             )
 
-        return best_beam, preds
+        best_beams = torch.cat(final_beams, dim=0).view(batch_size, -1)
+        return best_beams, final_preds
 
 
 class ScratchGPTModel(nn.Module):
     """
-    Mô hình GPT từ đầu với beam search và scheduled sampling.
+    Mô hình GPT từ đầu với beam search và scheduled sampling, sửa lỗi mask shape.
     """
 
     def __init__(
@@ -319,26 +317,39 @@ class ScratchGPTModel(nn.Module):
         return mask.masked_fill(mask == 1, float("-inf"))
 
     def forward(self, tgt_input, tgt_key_padding_mask=None, teacher_forcing_ratio=0.5):
+        # Đồng bộ mask với input khi teacher forcing
         if torch.rand(1).item() < teacher_forcing_ratio and self.training:
             tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
+            seq_len = tgt_input.size(1)
+            causal_mask = self._generate_square_subsequent_mask(seq_len)
+            if (
+                tgt_key_padding_mask is not None
+                and seq_len < tgt_key_padding_mask.size(1)
+            ):
+                tgt_key_padding_mask = tgt_key_padding_mask[:, :seq_len]
         else:
             with torch.no_grad():
                 output = self.forward(tgt_input[:, :-1], tgt_key_padding_mask)
                 next_tokens = output.argmax(-1)[:, -1:]
                 tgt_input = torch.cat((tgt_input[:, :-1], next_tokens), dim=1)
             tgt_emb = self.token_embedding(tgt_input) * math.sqrt(self.d_model)
+            seq_len = tgt_input.size(1)
+            causal_mask = self._generate_square_subsequent_mask(seq_len)
+            if (
+                tgt_key_padding_mask is not None
+                and seq_len < tgt_key_padding_mask.size(1)
+            ):
+                tgt_key_padding_mask = tgt_key_padding_mask[:, :seq_len]
 
         tgt_emb = self.positional_encoding(tgt_emb)
         tgt_emb = self.input_norm(tgt_emb)
-
-        causal_mask = self._generate_square_subsequent_mask(tgt_input.size(1))
 
         output = self.transformer_decoder(
             tgt_emb, mask=causal_mask, src_key_padding_mask=tgt_key_padding_mask
         )
         return self.fc_out(output)
 
-    def generate(self, prompt_ids, max_len, end_token_id, pad_token_id, num_beams=5):
+    def generate(self, prompt_ids, max_len, end_token_id, pad_token_id, num_beams=8):
         self.eval()
         batch_size = prompt_ids.size(0)
         beams = [(prompt_ids.clone(), 0.0)]
@@ -365,7 +376,9 @@ class ScratchGPTModel(nn.Module):
 
                 for i in range(num_beams):
                     next_token = top_idx[:, i].unsqueeze(1)
-                    next_score = score - torch.log(top_probs[:, i]).item()
+                    next_score = (
+                        score - torch.log(top_probs[:, i]).mean().item()
+                    )  # Trung bình log-prob cho batch
                     new_beam = torch.cat((beam, next_token), dim=1)
                     new_beams.append((new_beam, next_score))
 
