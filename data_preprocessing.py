@@ -20,7 +20,7 @@ from tokenizers import ByteLevelBPETokenizer
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 
-from .utils import plot_training_history, setup_directories
+from utils import plot_training_history, setup_directories
 
 # Thiết lập kiểu dáng cho biểu đồ
 sns.set(style="whitegrid")

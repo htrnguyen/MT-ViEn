@@ -7,22 +7,32 @@ Tích hợp mixed precision training, beam search nâng cao với length penalty
 Tối ưu cho GPU P100, hỗ trợ kiểm tra và thống kê quá trình.
 """
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.optim import AdamW
-from torch.amp import GradScaler, autocast
-from transformers import get_linear_schedule_with_warmup
-from tqdm.auto import tqdm
 import os
 import time
-from .utils import calculate_bleu, calculate_rouge, plot_training_history, save_results_table
-from .data_preprocessing import MarianTranslationDataset, GPTTranslationPromptDataset
+
+import torch
+import torch.nn as nn
+from torch.amp import GradScaler, autocast
+from torch.optim import AdamW
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+from transformers import get_linear_schedule_with_warmup
+
+from data_preprocessing import GPTTranslationPromptDataset, MarianTranslationDataset
+from utils import (
+    calculate_bleu,
+    calculate_rouge,
+    plot_training_history,
+    save_results_table,
+)
 
 # Thiết lập thiết bị (mặc định GPU P100)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def run_training(config, train_dataset, val_dataset, test_dataset, model, tokenizer, output_dir):
+
+def run_training(
+    config, train_dataset, val_dataset, test_dataset, model, tokenizer, output_dir
+):
     """
     Huấn luyện và đánh giá mô hình dịch máy.
 
@@ -42,8 +52,10 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
     model_save_dir = os.path.join(output_dir, "models", experiment_key)
     os.makedirs(model_save_dir, exist_ok=True)
     best_model_path = os.path.join(model_save_dir, "best_model.pt")
-    
-    print(f"\n{'='*30} BẮT ĐẦU HUẤN LUYỆN: {model_type} ({src_lang} -> {tgt_lang}) {'='*30}")
+
+    print(
+        f"\n{'='*30} BẮT ĐẦU HUẤN LUYỆN: {model_type} ({src_lang} -> {tgt_lang}) {'='*30}"
+    )
     print(f"Cấu hình: {config}")
 
     # Tạo DataLoader
@@ -52,21 +64,17 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
         batch_size=config["batch_size"],
         shuffle=True,
         num_workers=0,
-        pin_memory=True
+        pin_memory=True,
     )
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=config["batch_size"],
-        num_workers=0,
-        pin_memory=True
+        val_dataset, batch_size=config["batch_size"], num_workers=0, pin_memory=True
     )
     test_loader = DataLoader(
-        test_dataset,
-        batch_size=config["batch_size"],
-        num_workers=0,
-        pin_memory=True
+        test_dataset, batch_size=config["batch_size"], num_workers=0, pin_memory=True
     )
-    print(f"Đã tạo DataLoader: Train={len(train_loader)}, Val={len(val_loader)}, Test={len(test_loader)}")
+    print(
+        f"Đã tạo DataLoader: Train={len(train_loader)}, Val={len(val_loader)}, Test={len(test_loader)}"
+    )
 
     # Thiết lập optimizer, scheduler, criterion
     optimizer = AdamW(model.parameters(), lr=config["learning_rate"])
@@ -74,18 +82,30 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(total_steps * config["warmup_ratio"]),
-        num_training_steps=total_steps
+        num_training_steps=total_steps,
     )
-    criterion = nn.CrossEntropyLoss(
-        ignore_index=tokenizer.pad_token_id,
-        label_smoothing=config.get("label_smoothing", 0.1)
-    ) if model_type in ["Transformer_Scratch", "GPT_Scratch"] else None
+    criterion = (
+        nn.CrossEntropyLoss(
+            ignore_index=tokenizer.pad_token_id,
+            label_smoothing=config.get("label_smoothing", 0.1),
+        )
+        if model_type in ["Transformer_Scratch", "GPT_Scratch"]
+        else None
+    )
     scaler = GradScaler(enabled=device.type == "cuda")
 
     # Thiết lập tham số generation
     pad_token_id = tokenizer.pad_token_id
-    start_token_id = tokenizer.cls_token_id if model_type in ["Transformer_Scratch", "GPT_Scratch"] else tokenizer.bos_token_id
-    end_token_id = tokenizer.sep_token_id if model_type in ["Transformer_Scratch", "GPT_Scratch"] else tokenizer.eos_token_id
+    start_token_id = (
+        tokenizer.cls_token_id
+        if model_type in ["Transformer_Scratch", "GPT_Scratch"]
+        else tokenizer.bos_token_id
+    )
+    end_token_id = (
+        tokenizer.sep_token_id
+        if model_type in ["Transformer_Scratch", "GPT_Scratch"]
+        else tokenizer.eos_token_id
+    )
 
     # Lưu lịch sử huấn luyện
     history = {"train_loss": [], "val_loss": [], "val_bleu": [], "val_rougeL": []}
@@ -99,7 +119,7 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
         train_pbar = tqdm(
             train_loader,
             desc=f"Epoch {epoch+1}/{config['epochs']} Training",
-            leave=False
+            leave=False,
         )
 
         for batch in train_pbar:
@@ -119,14 +139,23 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                         input_ids,
                         decoder_input_ids,
                         src_key_padding_mask,
-                        tgt_key_padding_mask
+                        tgt_key_padding_mask,
                     )
-                    loss = criterion(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+                    loss = criterion(
+                        outputs.view(-1, outputs.size(-1)), labels.view(-1)
+                    )
                 elif model_type == "GPT_Scratch":
-                    outputs = model(input_ids, tgt_key_padding_mask=batch["attention_mask"].to(device))
-                    loss = criterion(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+                    outputs = model(
+                        input_ids,
+                        tgt_key_padding_mask=batch["attention_mask"].to(device),
+                    )
+                    loss = criterion(
+                        outputs.view(-1, outputs.size(-1)), labels.view(-1)
+                    )
                 else:  # MarianMT, GPT2FineTuned
-                    outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+                    outputs = model(
+                        input_ids, attention_mask=attention_mask, labels=labels
+                    )
                     loss = outputs.loss
 
             scaler.scale(loss).backward()
@@ -146,7 +175,7 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
         val_pbar = tqdm(
             val_loader,
             desc=f"Epoch {epoch+1}/{config['epochs']} Validation",
-            leave=False
+            leave=False,
         )
 
         with torch.no_grad():
@@ -168,16 +197,25 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                             input_ids,
                             decoder_input_ids,
                             src_key_padding_mask,
-                            tgt_key_padding_mask
+                            tgt_key_padding_mask,
                         )
-                        loss = criterion(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+                        loss = criterion(
+                            outputs.view(-1, outputs.size(-1)), labels.view(-1)
+                        )
                     elif model_type == "GPT_Scratch":
-                        outputs = model(input_ids, tgt_key_padding_mask=batch["attention_mask"].to(device))
-                        loss = criterion(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+                        outputs = model(
+                            input_ids,
+                            tgt_key_padding_mask=batch["attention_mask"].to(device),
+                        )
+                        loss = criterion(
+                            outputs.view(-1, outputs.size(-1)), labels.view(-1)
+                        )
                     else:
-                        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+                        outputs = model(
+                            input_ids, attention_mask=attention_mask, labels=labels
+                        )
                         loss = outputs.loss
-                
+
                 epoch_val_loss += loss.item()
 
                 # Sinh dự đoán với beam search nâng cao
@@ -188,11 +226,13 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                     "no_repeat_ngram_size": 2,
                     "early_stopping": True,
                     "pad_token_id": pad_token_id,
-                    "eos_token_id": end_token_id
+                    "eos_token_id": end_token_id,
                 }
 
                 if model_type == "MarianMT":
-                    gen_ids = model.generate(input_ids, attention_mask=attention_mask, **generation_params)
+                    gen_ids = model.generate(
+                        input_ids, attention_mask=attention_mask, **generation_params
+                    )
                     preds = tokenizer.batch_decode(gen_ids, skip_special_tokens=True)
                 elif model_type == "GPT2_FineTuned":
                     preds = []
@@ -202,13 +242,19 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                             prompt,
                             return_tensors="pt",
                             max_length=config["max_len"] - 20,
-                            truncation=True
+                            truncation=True,
                         ).to(device)
                         attn_mask_g = torch.ones_like(input_ids_g).to(device)
-                        gen_ids = model.generate(input_ids_g, attention_mask=attn_mask_g, **generation_params)
+                        gen_ids = model.generate(
+                            input_ids_g, attention_mask=attn_mask_g, **generation_params
+                        )
                         pred = tokenizer.decode(gen_ids[0], skip_special_tokens=True)
                         marker = f"{tgt_lang.capitalize()}:"
-                        pred = pred.split(marker)[-1].strip() if marker in pred else pred.replace(prompt, "").strip()
+                        pred = (
+                            pred.split(marker)[-1].strip()
+                            if marker in pred
+                            else pred.replace(prompt, "").strip()
+                        )
                         preds.append(pred)
                 elif model_type == "Transformer_Scratch":
                     src_key_padding_mask = batch["src_key_padding_mask"].to(device)
@@ -218,12 +264,18 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                         config["max_len"],
                         start_token_id,
                         end_token_id,
-                        pad_token_id
+                        pad_token_id,
                     )
                     preds = [
                         tokenizer.decode(
-                            ids[1:ids.tolist().index(end_token_id) if end_token_id in ids else len(ids)],
-                            skip_special_tokens=True
+                            ids[
+                                1 : (
+                                    ids.tolist().index(end_token_id)
+                                    if end_token_id in ids
+                                    else len(ids)
+                                )
+                            ],
+                            skip_special_tokens=True,
                         )
                         for ids in gen_ids
                     ]
@@ -234,21 +286,20 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                         prompt_ids = torch.tensor(
                             [start_token_id] + src_enc.ids + [end_token_id],
                             dtype=torch.long,
-                            device=device
+                            device=device,
                         ).unsqueeze(0)
                         if prompt_ids.size(1) > config["max_len"] // 2:
-                            prompt_ids = prompt_ids[:, :config["max_len"] // 2]
+                            prompt_ids = prompt_ids[:, : config["max_len"] // 2]
                         gen_ids = model.generate(
-                            prompt_ids,
-                            config["max_len"],
-                            end_token_id,
-                            pad_token_id
+                            prompt_ids, config["max_len"], end_token_id, pad_token_id
                         )
                         start_idx = prompt_ids.size(1)
                         gen_tgt_ids = gen_ids[0, start_idx:].cpu().tolist()
                         if end_token_id in gen_tgt_ids:
-                            gen_tgt_ids = gen_tgt_ids[:gen_tgt_ids.index(end_token_id)]
-                        preds.append(tokenizer.decode(gen_tgt_ids, skip_special_tokens=True))
+                            gen_tgt_ids = gen_tgt_ids[: gen_tgt_ids.index(end_token_id)]
+                        preds.append(
+                            tokenizer.decode(gen_tgt_ids, skip_special_tokens=True)
+                        )
 
                 val_preds.extend(preds)
                 val_refs.extend(tgt_texts)
@@ -256,7 +307,7 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
         val_loss = epoch_val_loss / len(val_loader)
         val_bleu = calculate_bleu(val_preds, val_refs)
         val_rouge = calculate_rouge(val_preds, val_refs)
-        
+
         history["val_loss"].append(val_loss)
         history["val_bleu"].append(val_bleu)
         history["val_rougeL"].append(val_rouge["rougeL"])
@@ -273,7 +324,9 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                 tokenizer.save_pretrained(model_save_dir)
             else:
                 torch.save(model.state_dict(), best_model_path)
-            print(f"-> Lưu mô hình tốt nhất (BLEU: {best_val_bleu:.2f}) tại: {best_model_path}")
+            print(
+                f"-> Lưu mô hình tốt nhất (BLEU: {best_val_bleu:.2f}) tại: {best_model_path}"
+            )
             patience_counter = 0
         else:
             patience_counter += 1
@@ -282,7 +335,11 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                 break
 
     # Vẽ biểu đồ lịch sử huấn luyện
-    plot_training_history(history, f"{model_type}_{src_lang}_to_{tgt_lang}", os.path.join(output_dir, "plots"))
+    plot_training_history(
+        history,
+        f"{model_type}_{src_lang}_to_{tgt_lang}",
+        os.path.join(output_dir, "plots"),
+    )
 
     # Đánh giá trên tập test
     print(f"\n{'='*30} ĐÁNH GIÁ: {model_type} ({src_lang} -> {tgt_lang}) {'='*30}")
@@ -306,23 +363,33 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
             generation_params["length_penalty"] = 1.2  # Khuyến khích chuỗi dài hơn
 
             if model_type == "MarianMT":
-                gen_ids = model.generate(input_ids, attention_mask=attention_mask, **generation_params)
+                gen_ids = model.generate(
+                    input_ids, attention_mask=attention_mask, **generation_params
+                )
                 preds = tokenizer.batch_decode(gen_ids, skip_special_tokens=True)
             elif model_type == "GPT2_FineTuned":
                 preds = []
                 for src_text in src_texts:
-                    prompt = f"{src_lang.capitalize()}: {src_text} {tgt_lang.capitalize()}:"
+                    prompt = (
+                        f"{src_lang.capitalize()}: {src_text} {tgt_lang.capitalize()}:"
+                    )
                     input_ids_g = tokenizer.encode(
                         prompt,
                         return_tensors="pt",
                         max_length=config["max_len"] - 20,
-                        truncation=True
+                        truncation=True,
                     ).to(device)
                     attn_mask_g = torch.ones_like(input_ids_g).to(device)
-                    gen_ids = model.generate(input_ids_g, attention_mask=attn_mask_g, **generation_params)
+                    gen_ids = model.generate(
+                        input_ids_g, attention_mask=attn_mask_g, **generation_params
+                    )
                     pred = tokenizer.decode(gen_ids[0], skip_special_tokens=True)
                     marker = f"{tgt_lang.capitalize()}:"
-                    pred = pred.split(marker)[-1].strip() if marker in pred else pred.replace(prompt, "").strip()
+                    pred = (
+                        pred.split(marker)[-1].strip()
+                        if marker in pred
+                        else pred.replace(prompt, "").strip()
+                    )
                     preds.append(pred)
             elif model_type == "Transformer_Scratch":
                 src_key_padding_mask = batch["src_key_padding_mask"].to(device)
@@ -332,12 +399,18 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                     config["max_len"],
                     start_token_id,
                     end_token_id,
-                    pad_token_id
+                    pad_token_id,
                 )
                 preds = [
                     tokenizer.decode(
-                        ids[1:ids.tolist().index(end_token_id) if end_token_id in ids else len(ids)],
-                        skip_special_tokens=True
+                        ids[
+                            1 : (
+                                ids.tolist().index(end_token_id)
+                                if end_token_id in ids
+                                else len(ids)
+                            )
+                        ],
+                        skip_special_tokens=True,
                     )
                     for ids in gen_ids
                 ]
@@ -348,21 +421,20 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
                     prompt_ids = torch.tensor(
                         [start_token_id] + src_enc.ids + [end_token_id],
                         dtype=torch.long,
-                        device=device
+                        device=device,
                     ).unsqueeze(0)
                     if prompt_ids.size(1) > config["max_len"] // 2:
-                        prompt_ids = prompt_ids[:, :config["max_len"] // 2]
+                        prompt_ids = prompt_ids[:, : config["max_len"] // 2]
                     gen_ids = model.generate(
-                        prompt_ids,
-                        config["max_len"],
-                        end_token_id,
-                        pad_token_id
+                        prompt_ids, config["max_len"], end_token_id, pad_token_id
                     )
                     start_idx = prompt_ids.size(1)
                     gen_tgt_ids = gen_ids[0, start_idx:].cpu().tolist()
                     if end_token_id in gen_tgt_ids:
-                        gen_tgt_ids = gen_tgt_ids[:gen_tgt_ids.index(end_token_id)]
-                    preds.append(tokenizer.decode(gen_tgt_ids, skip_special_tokens=True))
+                        gen_tgt_ids = gen_tgt_ids[: gen_tgt_ids.index(end_token_id)]
+                    preds.append(
+                        tokenizer.decode(gen_tgt_ids, skip_special_tokens=True)
+                    )
 
             test_preds.extend(preds)
             test_refs.extend(tgt_texts)
@@ -371,11 +443,13 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
     # Tính toán kết quả test
     test_bleu = calculate_bleu(test_preds, test_refs)
     test_rouge = calculate_rouge(test_preds, test_refs)
-    
+
     print(f"\nKết quả Test ({model_type} {src_lang}->{tgt_lang}):")
     print(f"- BLEU: {test_bleu:.2f}")
-    print(f"- ROUGE-1: {test_rouge['rouge1']:.4f}, ROUGE-2: {test_rouge['rouge2']:.4f}, ROUGE-L: {test_rouge['rougeL']:.4f}")
-    
+    print(
+        f"- ROUGE-1: {test_rouge['rouge1']:.4f}, ROUGE-2: {test_rouge['rouge2']:.4f}, ROUGE-L: {test_rouge['rougeL']:.4f}"
+    )
+
     # In mẫu kết quả
     for i in range(min(3, len(test_preds))):
         print(f"\nMẫu {i+1}:")
@@ -387,7 +461,7 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
         "BLEU": f"{test_bleu:.2f}",
         "ROUGE-1": f"{test_rouge['rouge1']:.4f}",
         "ROUGE-2": f"{test_rouge['rouge2']:.4f}",
-        "ROUGE-L": f"{test_rouge['rougeL']:.4f}"
+        "ROUGE-L": f"{test_rouge['rougeL']:.4f}",
     }
 
     # Lưu mô hình cuối
@@ -407,10 +481,22 @@ def run_training(config, train_dataset, val_dataset, test_dataset, model, tokeni
 
     return history, results, experiment_key
 
+
 if __name__ == "__main__":
-    from .data_preprocessing import load_and_preprocess_data, train_bpe_tokenizer, ScratchTransformerDataset, ScratchGPTDataset
-    from .models import MarianMTWrapper, TransformerScratchModel, ScratchGPTModel, GPT2FineTunedWrapper
-    from transformers import MarianTokenizer, GPT2Tokenizer
+    from transformers import GPT2Tokenizer, MarianTokenizer
+
+    from .data_preprocessing import (
+        ScratchGPTDataset,
+        ScratchTransformerDataset,
+        load_and_preprocess_data,
+        train_bpe_tokenizer,
+    )
+    from .models import (
+        GPT2FineTunedWrapper,
+        MarianMTWrapper,
+        ScratchGPTModel,
+        TransformerScratchModel,
+    )
 
     # Cấu hình mẫu
     config = {
@@ -429,13 +515,15 @@ if __name__ == "__main__":
         "num_encoder_layers": 3,
         "num_decoder_layers": 3,
         "dim_feedforward": 512,
-        "dropout": 0.2
+        "dropout": 0.2,
     }
 
     # Tải dữ liệu
     data_file = "/kaggle/input/daily-en-vi/eng-vie.csv"
     output_dir = "./output"
-    train_df, val_df, test_df, plot_dir = load_and_preprocess_data(data_file, output_dir)
+    train_df, val_df, test_df, plot_dir = load_and_preprocess_data(
+        data_file, output_dir
+    )
 
     # Khởi tạo tokenizer và mô hình
     tokenizer = train_bpe_tokenizer(train_df, output_dir)
@@ -448,13 +536,19 @@ if __name__ == "__main__":
         num_decoder_layers=config["num_decoder_layers"],
         dim_feedforward=config["dim_feedforward"],
         dropout=config["dropout"],
-        max_seq_len=config["max_len"]
+        max_seq_len=config["max_len"],
     ).to(device)
 
     # Tạo dataset
-    train_dataset = ScratchTransformerDataset(train_df, tokenizer, "en", "vi", config["max_len"])
-    val_dataset = ScratchTransformerDataset(val_df, tokenizer, "en", "vi", config["max_len"])
-    test_dataset = ScratchTransformerDataset(test_df, tokenizer, "en", "vi", config["max_len"])
+    train_dataset = ScratchTransformerDataset(
+        train_df, tokenizer, "en", "vi", config["max_len"]
+    )
+    val_dataset = ScratchTransformerDataset(
+        val_df, tokenizer, "en", "vi", config["max_len"]
+    )
+    test_dataset = ScratchTransformerDataset(
+        test_df, tokenizer, "en", "vi", config["max_len"]
+    )
 
     # Chạy huấn luyện
     history, results, experiment_key = run_training(
