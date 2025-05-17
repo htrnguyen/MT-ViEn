@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from rouge_score import rouge_scorer
 from sacrebleu.metrics import BLEU
-from torch.amp import autocast, GradScaler
+from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, Dataset
 from transformers import MarianMTModel, MarianTokenizer, get_linear_schedule_with_warmup
 
