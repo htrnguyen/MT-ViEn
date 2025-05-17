@@ -85,7 +85,7 @@ def train_marianmt(
         train_loss = 0
         for batch in train_loader:
             optimizer.zero_grad()
-            with autocast("cuda"):
+            with autocast(device_type="cuda"):
                 outputs = model(
                     input_ids=batch["input_ids"].to(device),
                     attention_mask=batch["attention_mask"].to(device),
