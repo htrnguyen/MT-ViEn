@@ -19,7 +19,7 @@ def clean_text(text):
     )
     # Chuẩn hóa khoảng trắng
     text = " ".join(text.split())
-    return text
+    return text.strip()
 
 
 def load_and_clean_csv(path, lang1="en", lang2="vi"):
