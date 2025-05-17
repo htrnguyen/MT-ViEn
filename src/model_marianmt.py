@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from rouge_score import rouge_scorer
 from sacrebleu.metrics import BLEU
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, Dataset
 from transformers import MarianMTModel, MarianTokenizer, get_linear_schedule_with_warmup
 
@@ -74,7 +74,7 @@ def train_marianmt(
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=300, num_training_steps=len(train_loader) * EPOCHS
     )
-    scaler = GradScaler("cuda")
+    scaler = GradScaler(device_type="cuda")
     train_losses, val_losses, val_bleus, train_times = [], [], [], []
     best_bleu, best_loss = -float("inf"), float("inf")
     bleu_counter = loss_counter = 0
@@ -103,7 +103,7 @@ def train_marianmt(
         model.eval()
         val_loss = 0
         preds, refs = [], []
-        with torch.no_grad():
+        with autocast(device_type="cuda"):
             for batch in val_loader:
                 outputs = model(
                     input_ids=batch["input_ids"].to(device),
@@ -163,7 +163,7 @@ def train_marianmt(
 def evaluate_marianmt(model, tokenizer, test_loader, reference_dict, device):
     model.eval()
     preds, refs = [], []
-    with torch.no_grad():
+    with autocast(device_type="cuda"):
         for batch in test_loader:
             generated_ids = model.generate(
                 batch["input_ids"].to(device),
@@ -202,7 +202,7 @@ def sample_inference(model, tokenizer, input_texts, device, max_len=80):
         truncation=True,
         max_length=max_len,
     )
-    with torch.no_grad():
+    with autocast(device_type="cuda"):
         generated_ids = model.generate(
             inputs["input_ids"].to(device),
             attention_mask=inputs["attention_mask"].to(device),
