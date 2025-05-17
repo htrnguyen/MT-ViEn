@@ -48,6 +48,13 @@ def split_data(df, test_size=0.2, val_size=0.1, random_state=42):
     train_df, val_df = train_test_split(
         train_df, test_size=val_size, random_state=random_state
     )
+
+    print(f"Train size: {len(train_df)}")
+    print(f"Validation size: {len(val_df)}")
+    print(f"Test size: {len(test_df)}")
+    print(f"Total size: {len(train_df) + len(val_df) + len(test_df)}")
+    print(f"Train/Validation/Test ratio: {len(train_df)}/{len(val_df)}/{len(test_df)}")
+
     return (
         train_df.reset_index(drop=True),
         val_df.reset_index(drop=True),
@@ -84,8 +91,6 @@ def analyze_length_distribution(df, lang1="en", lang2="vi"):
     plt.tight_layout()
     plt.show()
 
-
-# --- Ví dụ sử dụng (nên gọi từ main.ipynb) ---
 
 if __name__ == "__main__":
     # Đọc và làm sạch dữ liệu

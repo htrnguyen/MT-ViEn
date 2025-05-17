@@ -1,3 +1,4 @@
+```bash
 /
 ├── data/
 │ └── eng-vie.csv
@@ -14,3 +15,4 @@
 │ └── ... # Lưu mô hình, tokenizer, checkpoint, metrics
 ├── main.ipynb # Notebook chính chạy các bước theo thứ tự, trực quan hóa
 └── requirements.txt # Thư viện cần cài (dùng cho local hoặc Colab/Kaggle)
+```
